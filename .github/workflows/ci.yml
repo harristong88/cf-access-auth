@@ -1,0 +1,76 @@
+name: verify
+on: [push, pull_request]
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['22.12.0', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm pack
+  php:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ['8.1', '8.3', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, openssl, pdo_sqlite, mbstring
+      - run: composer install --no-interaction
+      - run: composer validate --strict
+      - run: composer test
+      - run: composer audit --no-dev
+  filegator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: curl, openssl, pdo_sqlite, mbstring, zip
+      - run: npm ci
+      - run: composer install --no-interaction
+      - run: node scripts/prepare-filegator.mjs
+      - run: FILEGATOR_ROOT="$PWD/.artifacts/filegator" composer test
+      - run: npx playwright install --with-deps chromium
+      - name: Start fixture server
+        run: |
+          CF_TEAM_DOMAIN=https://fixture.cloudflareaccess.com CF_ACCESS_AUD=test-audience CF_ADMIN_EMAILS=alice@example.com CF_CSRF_KEY=test-only-csrf php -d display_errors=0 -S 127.0.0.1:8088 -t .artifacts/filegator/dist > .artifacts/server.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -s http://127.0.0.1:8088/ > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - run: node scripts/filegator.e2e.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: filegator-evidence
+          path: .artifacts/server.log
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install './python[test]' build
+      - run: cd python && python -m pytest
+      - run: python -m build python
