@@ -1,0 +1,7 @@
+ARG PHP_VERSION=8.1
+FROM composer:2 AS composer
+FROM php:${PHP_VERSION}-cli-alpine
+RUN apk add --no-cache curl-dev sqlite-dev oniguruma-dev libzip-dev \
+    && docker-php-ext-install -j2 curl pdo_sqlite mbstring zip
+COPY --from=composer /usr/bin/composer /usr/local/bin/composer
+WORKDIR /work

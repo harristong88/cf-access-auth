@@ -1,0 +1,18 @@
+#!/usr/bin/env php
+<?php
+require ($_composer_autoload_path ?? dirname(__DIR__, 2) . '/vendor/autoload.php');
+use CfAccess\AccountStore;
+
+$options = getopt('', ['source:', 'database:', 'email-map:', 'apply']);
+try {
+    if (!isset($options['source'])) throw new InvalidArgumentException('Usage: import-users --source=users.json [--database=accounts.sqlite] [--email-map=map.json] [--apply]');
+    $apply = isset($options['apply']);
+    if ($apply && !isset($options['database'])) throw new InvalidArgumentException('--apply requires --database');
+    $users = json_decode(file_get_contents($options['source']), true, 32, JSON_THROW_ON_ERROR);
+    $map = isset($options['email-map']) ? json_decode(file_get_contents($options['email-map']), true, 32, JSON_THROW_ON_ERROR) : [];
+    // Default dry-run creates no persistent files. A supplied database is checked for collisions.
+    $path = $options['database'] ?? ':memory:';
+    if (!$apply && !is_file($path)) $path = ':memory:';
+    $store = new AccountStore($path, [], !$apply && $path !== ':memory:');
+    echo json_encode(['dryRun' => !$apply, 'accounts' => $store->import($users, $map, !$apply)], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . "\n";
+} catch (Throwable $e) { fwrite(STDERR, $e->getMessage() . "\n"); exit(1); }

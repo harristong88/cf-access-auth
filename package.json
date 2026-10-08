@@ -1,0 +1,53 @@
+{
+  "name": "cf-access-auth",
+  "version": "0.1.0",
+  "description": "Verified Cloudflare Access identities and Express integration",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./express": {
+      "types": "./dist/express.d.ts",
+      "import": "./dist/express.js"
+    }
+  },
+  "files": [
+    "dist",
+    "docs",
+    "readme.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --experimental-sqlite --import tsx --test test/*.test.ts",
+    "prepare": "npm run build",
+    "example": "node --experimental-sqlite --import tsx examples/express/app.ts",
+    "fixtures": "node scripts/generate-fixtures.mjs",
+    "check": "npm test && tsc -p examples/express/tsconfig.json"
+  },
+  "dependencies": {
+    "jose": "^6.1.0"
+  },
+  "peerDependencies": {
+    "express": "^4.21.0 || ^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "express": "^5.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "@playwright/test": "^1.55.0"
+  }
+}
