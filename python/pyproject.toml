@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cf-access-auth"
+version = "0.2.0"
+description = "Verified Cloudflare Access human identities for Python applications"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["PyJWT[crypto]>=2.10,<3", "httpx>=0.28,<1"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.25"]
+
+[tool.setuptools.packages.find]
+include = ["cf_access_auth*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
