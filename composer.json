@@ -1,0 +1,47 @@
+{
+  "name": "cf-access/auth",
+  "description": "Cloudflare Access JWT verification and FileGator adapter",
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": "^8.1",
+    "ext-openssl": "*",
+    "ext-curl": "*",
+    "ext-pdo": "*",
+    "ext-pdo_sqlite": "*",
+    "firebase/php-jwt": "^7.2",
+    "ext-mbstring": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "CfAccess\\": "php/src/"
+    }
+  },
+  "bin": [
+    "php/bin/import-users",
+    "php/bin/account"
+  ],
+  "scripts": {
+    "test": "php php/tests/run.php"
+  },
+  "archive": {
+    "exclude": [
+      "/node_modules",
+      "/vendor",
+      "/dist",
+      "/.artifacts",
+      "/test",
+      "/php/tests",
+      "/fixtures",
+      "/.github",
+      "/package-lock.json",
+      "/php/vendor",
+      "/scripts",
+      "/src",
+      "/tsconfig.json",
+      "/.gitignore",
+      "/package.json",
+      "/examples/express"
+    ]
+  }
+}

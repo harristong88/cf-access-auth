@@ -1,0 +1,15 @@
+node_modules/
+dist/
+vendor/
+php/vendor/
+*.sqlite*
+.env
+.artifacts/
+playwright-report/
+test-results/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+python/build/
+python/dist/

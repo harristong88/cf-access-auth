@@ -1,0 +1,14 @@
+#!/usr/bin/env php
+<?php
+require ($_composer_autoload_path ?? dirname(__DIR__, 2) . '/vendor/autoload.php');
+use CfAccess\AccountStore;
+$options = getopt('', ['database:', 'username:', 'disable', 'enable', 'relink', 'issuer:', 'subject:']);
+try {
+    if (!isset($options['database'], $options['username']) || count(array_intersect(['disable','enable','relink'], array_keys($options))) !== 1)
+        throw new InvalidArgumentException('Usage: account --database=... --username=... --disable|--enable|--relink [--issuer=... --subject=...]');
+    $store = new AccountStore($options['database']);
+    if (isset($options['disable'])) $store->disable($options['username']);
+    if (isset($options['enable'])) $store->enable($options['username']);
+    if (isset($options['relink'])) $store->relink($options['username'], $options['issuer'] ?? '', $options['subject'] ?? '');
+    echo "Account updated\n";
+} catch (Throwable $e) { fwrite(STDERR, $e->getMessage() . "\n"); exit(1); }
