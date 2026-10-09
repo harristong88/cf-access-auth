@@ -14,7 +14,7 @@ The middleware protects only paths mounted beneath it. WebSocket handshakes, bac
 
 Keep existing resource authorization, CSRF defenses, and secure session cookies. JWT verification is not CSRF protection. Replacing login must also remove registration, password reset, alternate API sessions, and any unguarded handlers in your own app; the examples demonstrate the relevant integration but cannot discover those paths in repositories not supplied here.
 
-The Express SQLite store is a runnable example, not a database migration for your actual app. Adapt the resolver transaction to its existing user schema. The FileGator adapter owns its SQLite store, supports only the pinned JSON/local-storage migration, and preserves legacy shared homes. Automatic existing-email linking assumes the administrator-maintained account email is correct; fix ambiguous/untrusted emails before migration.
+The Express SQLite store is an app-owned runnable example. The PHP verifier owns no accounts: each consumer must resolve identities transactionally in its own account repository, retain disabled-account bindings, and control role/home assignment. FileGator's implementation and migration tools live in its repository.
 
 PHP sees the headers your web server exposes. Duplicate values that are preserved as arrays or joined with commas are rejected. Configure upstream proxies/web servers to reject duplicate assertion headers rather than silently discard all but one; a PHP application cannot reconstruct headers discarded before it receives a request. Express checks Node's original `rawHeaders` as well.
 

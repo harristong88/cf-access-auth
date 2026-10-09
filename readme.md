@@ -2,7 +2,7 @@
 
 Replace application passwords with **verified Cloudflare Access identities**, while keeping accounts, permissions, and data inside each app.
 
-This repository is both an npm package (`cf-access-auth`) and a Composer package (`cf-access/auth`). It includes a runnable Express example, a FileGator adapter and versioned patch, migration commands, and shared security fixtures. No additional authentication service or Cloudflare API credential is required.
+This repository is both an npm package (`cf-access-auth`) and a Composer package (`cf-access/auth`). It includes a runnable Express example, reusable PHP and Python verifiers and shared security fixtures. No additional authentication service or Cloudflare API credential is required.
 
 ## Request flow
 
@@ -44,9 +44,9 @@ CF_ADMIN_EMAILS=owner@example.com npm run example
 
 The example binds to `127.0.0.1:3000`, uses an app-local SQLite database, exposes `/api/me`, and has no password routes. The npm scripts enable SQLite on Node 22.12 with `--experimental-sqlite`; newer Node versions expose it by default. Older versions can emit an experimental warning. It issues no local session; an existing app must invalidate its own session before navigating to `/cdn-cgi/access/logout`.
 
-## PHP / FileGator
+## PHP
 
-Requires PHP 8.1+ with OpenSSL, cURL, PDO SQLite, and mbstring. The cryptographic dependency is `firebase/php-jwt` 7.2+, selected because 6.x is affected by a security advisory.
+Requires PHP 8.1+ with OpenSSL, cURL, and mbstring. The cryptographic dependency is `firebase/php-jwt` 7.2+, selected because 6.x is affected by a security advisory.
 
 ```php
 $verifier = new \CfAccess\AccessVerifier([
@@ -57,16 +57,9 @@ $verifier = new \CfAccess\AccessVerifier([
 $identity = $verifier->authenticateRequest($requestHeaders);
 ```
 
-For FileGator, install the Composer package, apply the pinned patch, and configure the adapter. Follow **[the FileGator installation and migration guide](docs/filegator.md)**. Replacing only the adapter leaves password/logout UI behind.
+The application resolves the verified `(issuer, subject)` to its own local account, assigns roles/permissions, manages sessions and CSRF, and implements logout. The PHP package owns no account database, filesystem homes, or framework adapter.
 
-## Accounts and defaults
-
-- First resolve `(issuer, subject)`. Otherwise link a unique existing normalized email, preserving its role and home; otherwise create a basic user.
-- A different subject cannot automatically claim an already-bound account. Relink it explicitly after reviewing the change.
-- `CF_ADMIN_EMAILS` grants admin status **only at account creation**. It never promotes linked existing users or changes a provisioned user's role later.
-- FileGator creates `/users/<opaque-local-id>/` with read/write/upload/download/batchdownload/zip permissions, excluding chmod. New administrators also receive a private home; local administration can change it.
-- Disabled/deleted FileGator users retain their identity bindings and reserved email; they cannot recreate themselves by signing in. Deletion does not delete their files.
-- Local user deletion and Cloudflare admission are separate controls. Remove the email from Access policies when admission itself should end.
+PHP v0.3.0 removes the former FileGator-specific APIs and migration commands. The integrated [FileGator fork](https://github.com/harristong88/filegator) owns those responsibilities; see [migration notes](docs/filegator.md). Node and Python identity APIs are unchanged. The Express account store remains an example owned by the example app.
 
 ## Verification behavior
 
@@ -86,7 +79,7 @@ composer install
 composer test
 ```
 
-CI covers Node 22.12/24 and PHP 8.1/8.3/8.5, plus the pinned FileGator HTTP/Chromium scenario. Shared signed fixtures are test-only and do not contain real Cloudflare credentials.
+CI covers Node 22.12/24 and PHP 8.1/8.3/8.5, without requiring FileGator. Shared signed fixtures are test-only and do not contain real Cloudflare credentials.
 
 Cloudflare documentation: [token validation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), [claims and subject semantics](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/), and [logout behavior](https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/).
 
