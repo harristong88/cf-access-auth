@@ -31,7 +31,7 @@ The private account email appeared in author/committer metadata on five original
 
 The initial history scan flagged 25 synthetic fixture JWTs and two public sample private keys in the dependency's README. No live authentication credentials were identified. One historical commit also accidentally included installed dependencies and generated release artifacts. Cleanup removes `node_modules/`, `vendor/`, `php/vendor/`, `dist/`, and `.artifacts/` from versioned history while keeping source and lockfiles.
 
-History rewrite and remote verification are pending at the time of this entry; completion will be recorded after validation.
+Local history cleanup is complete. All locally stored Git commit, tag, and blob objects were checked for the private address, with zero matches. The tested current source tree was preserved exactly. Generated dependency/build paths are absent from every historical commit, and the sanitized full-history Gitleaks scan reports no findings. Remote publication and verification are pending.
 
 Rewriting published history changes commit and tag identifiers. Existing consumers must update their pinned revisions, and existing clones should be replaced or carefully reset to the sanitized history. Old copies, forks, pull-request refs, and cached GitHub commit pages cannot be erased by a branch/tag push alone. See [GitHub's history-removal guidance](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository).
 
