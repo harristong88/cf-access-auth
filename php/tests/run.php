@@ -41,10 +41,11 @@ test('PHP configuration boundaries and audience transition', function () use ($b
 test('sequential failed downloads back off and recover', function () use ($base, $f) {
     $calls = 0; $available = false;
     $fetch = static function () use (&$calls, &$available, $f) { $calls++; if (!$available) throw new RuntimeException('offline'); return $f['jwks']; };
-    $v = new AccessVerifier($base + ['cacheDirectory'=>tempdir(), 'cooldown'=>1, 'fetch'=>$fetch]);
+    // PHP uses whole seconds: leave room around a wall-clock second boundary.
+    $v = new AccessVerifier($base + ['cacheDirectory'=>tempdir(), 'cooldown'=>2, 'fetch'=>$fetch]);
     for ($i=0; $i<5; $i++) denied(fn () => $v->verifyToken($f['cases']['valid']['token']),503);
     check($calls === 1);
-    $available = true; sleep(1);
+    $available = true; sleep(3);
     $v->verifyToken($f['cases']['valid']['token']); check($calls === 2);
 });
 test('PHP rejects an unsupported key even alongside a matching RSA key', function () use ($base, $f) {
