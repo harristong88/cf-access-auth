@@ -2,6 +2,8 @@
 
 The Git repository contains independent npm, Composer, and Python packages. PHP v0.3.0 is an identity-only release. Node and Python APIs are unchanged.
 
+The October 13, 2026 security hardening is on `main` and is described in [remediation results](security-remediation-2026-10-13.md). Existing `v0.2.0` and `v0.3.0` tags have sanitized identities but retain their historical source behavior. Publish a patched release containing the hardening before recommending those packages for new production deployments.
+
 ## Composer consumer
 
 Add a VCS repository for `https://github.com/harristong88/cf-access-auth.git` to the consumer's composer.json, then run `composer require cf-access/auth:0.3.0`. Commit composer.lock, which records the selected release commit. Deploy with `composer install --no-dev --prefer-dist`.
