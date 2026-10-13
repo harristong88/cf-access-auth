@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 import httpx
 import jwt
 
+from ._jwks import SigningKey as _SigningKey, _parse_signing_keys
+
 MAX_TOKEN_BYTES = 16384
 
 
@@ -103,7 +105,7 @@ class AccessVerifier:
         self._client = httpx.AsyncClient(
             timeout=timeout, transport=transport, follow_redirects=False
         )
-        self._keys: dict[str, object] = {}
+        self._keys: dict[str, _SigningKey] = {}
         self._expires = 0.0
         self._last_fetch = -math.inf
         self._generation = 0
@@ -140,21 +142,7 @@ class AccessVerifier:
                 response = await self._client.get(self.issuer + "/cdn-cgi/access/certs")
                 response.raise_for_status()
                 document = response.json()
-                keys = {}
-                for raw in document["keys"]:
-                    if (
-                        raw.get("kty") != "RSA"
-                        or raw.get("use", "sig") != "sig"
-                        or raw.get("alg", "RS256") != "RS256"
-                    ):
-                        continue
-                    key_id = raw.get("kid")
-                    if not isinstance(key_id, str) or not key_id or key_id in keys:
-                        raise ValueError("Invalid key ID")
-                    keys[key_id] = jwt.algorithms.RSAAlgorithm.from_jwk(raw)
-                if not keys:
-                    raise ValueError("No signing keys")
-                self._keys = keys
+                self._keys = _parse_signing_keys(document)
                 self._expires = time.monotonic() + self.cache_ttl
                 self._last_error = False
             except Exception:
