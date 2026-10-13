@@ -1,13 +1,11 @@
-import { createRemoteJWKSet, customFetch, decodeProtectedHeader, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { decodeProtectedHeader, jwtVerify } from 'jose';
+import { AccessError } from './access-error.js';
+import { createKeyResolver } from './jwks.js';
+
+export { AccessError } from './access-error.js';
 
 export interface AccessIdentity { issuer: string; subject: string; email: string; expiresAt: number }
 export type Diagnostic = (event: { code: string; status: number }) => void;
-export class AccessError extends Error {
-  constructor(public readonly code: string, public readonly status: 401 | 403 | 503 = 401) {
-    super(status === 401 ? 'Unauthorized' : status === 403 ? 'Forbidden' : 'Authentication unavailable');
-    this.name = 'AccessError';
-  }
-}
 export interface AccessConfig {
   teamDomain: string; audience: string | readonly string[];
   cacheMaxAge?: number; timeoutDuration?: number; cooldownDuration?: number;
@@ -47,28 +45,7 @@ export function createAccessVerifier(config: AccessConfig) {
   if (!audience.length || audience.some(a => typeof a !== 'string' || !a.trim() || a !== a.trim())) throw new TypeError('audience is required');
   const settings = {cacheMaxAge: config.cacheMaxAge ?? 600000, timeoutDuration: config.timeoutDuration ?? 5000, cooldownDuration: config.cooldownDuration ?? 30000};
   for (const value of Object.values(settings)) if (!Number.isFinite(value) || value < 0) throw new TypeError('Invalid JWKS timing');
-  let retryAfter = 0;
-  const transport = config.fetch ?? globalThis.fetch;
-  const keys = createRemoteJWKSet(new URL('/cdn-cgi/access/certs', issuer), {
-    ...settings,
-    [customFetch]: async (url, options) => {
-      // Only remote fetches are gated: fresh matching keys remain usable offline.
-      if (performance.now() < retryAfter) throw new AccessError('JWKS_UNAVAILABLE', 503);
-      return transport(url, options);
-    },
-  });
-  const resolveKey: JWTVerifyGetKey = async (header, token) => {
-    try { return await keys(header, token); }
-    catch (error) {
-      const code = (error as {code?: string})?.code;
-      if (!(error instanceof AccessError) && code !== 'ERR_JWKS_NO_MATCHING_KEY' && code !== 'ERR_JOSE_NOT_SUPPORTED') {
-        // jose's own cooldown covers successful downloads, but not failures.
-        // Back off transport, HTTP, JSON and malformed-JWKS failures as well.
-        retryAfter = performance.now() + settings.cooldownDuration;
-      }
-      throw error;
-    }
-  };
+  const resolveKey = createKeyResolver(issuer, settings, config.fetch);
   function report(error: AccessError): never {
     try { config.onDiagnostic?.({code: error.code, status: error.status}); } catch { /* Diagnostics cannot change authentication. */ }
     throw error;
