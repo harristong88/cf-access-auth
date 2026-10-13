@@ -4,6 +4,28 @@ Replace application passwords with **verified Cloudflare Access identities**, wh
 
 This repository is both an npm package (`cf-access-auth`) and a Composer package (`cf-access/auth`). It includes a runnable Express example, reusable PHP and Python verifiers and shared security fixtures. No additional authentication service or Cloudflare API credential is required.
 
+## Repository layout and change rules
+
+| Location | Responsibility |
+| --- | --- |
+| `src/index.ts`, `src/express.ts` | Public npm core and optional Express adapter; keep package exports stable. |
+| `src/jwks.ts`, `src/access-error.ts` | Private Node key lookup and shared exception definition. |
+| `python/cf_access_auth/__init__.py` | Public Python imports, configuration, headers, and identity verification. |
+| `python/cf_access_auth/_jwks.py`, `_errors.py` | Private Python key parsing, cache/client lifecycle, and shared exception definition. |
+| `php/src/` | Public Composer verifier/identity classes and the PHP persistent key cache. |
+| `examples/express/` | App-owned account mapping and runnable UI; neither belongs to the library API. |
+| `fixtures/`, `scripts/generate-fixtures.mjs` | Shared synthetic verification contract; see `fixtures/README.md`. |
+| `test/`, `php/tests/`, `python/tests/` | Native contract, cache, configuration, and integration checks. |
+| `scripts/smoke-*-package.*`, `.github/workflows/ci.yml` | Clean-consumer checks for built packages and CI verification. |
+
+Keep cryptographic verification native to each language. Add authentication cases
+and expectations to the fixture generator; all three runners consume them.
+Record existing language differences with explicit expectations. Changes to accepted
+tokens, configuration, or error behavior are bug fixes or features, separate from
+structural refactors. Run the affected native suite and installed-package check
+after moving runtime code, and all three suites before merging. FileGator adapters,
+accounts, filesystem homes, and browser tests live in the FileGator repository.
+
 ## Request flow
 
 Browser → Cloudflare Access / Google login → Tunnel → JWT verification → local account → existing app authorization.
