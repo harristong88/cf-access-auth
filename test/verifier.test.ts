@@ -5,13 +5,13 @@ import { AccessError, createAccessVerifier, assertionFromHeaders } from '../src/
 const f = JSON.parse(readFileSync(new URL('../fixtures/tokens.json', import.meta.url), 'utf8'));
 const mock = (jwks = f.jwks) => (async () => new Response(JSON.stringify(jwks))) as typeof fetch;
 const config = {teamDomain:f.issuer,audience:f.audience};
-for (const [name, scenario] of Object.entries(f.cases) as [string, {token:string,status:number}][]) {
+for (const [name, scenario] of Object.entries(f.cases) as [string, {token:string,status:number,identity?:unknown}][]) {
   if (name === 'rotated') continue;
   test(`shared fixture: ${name}`, async () => {
     const verifier = createAccessVerifier({...config, fetch:mock()});
     if (scenario.status === 200) {
       const identity = await verifier.verifyToken(scenario.token);
-      assert.equal(identity.issuer,f.issuer); assert.equal(identity.expiresAt,4102444800);
+      assert.deepEqual(identity,scenario.identity);
       assert.deepEqual(Object.keys(identity),['issuer','subject','email','expiresAt']);
     } else await assert.rejects(verifier.verifyToken(scenario.token), (e:AccessError) => e.status === 401);
   });
@@ -23,6 +23,34 @@ test('headers: case, duplicate, arrays, comma merging, cookie-only, email-only',
   for (const headers of [{}, {'cookie':`CF_Authorization=${token}`},{'Cf-Access-Authenticated-User-Email':'alice@example.com'},
     {'cf-access-jwt-assertion':[token]}, {'cf-access-jwt-assertion':token,'Cf-Access-Jwt-Assertion':token},
     {'cf-access-jwt-assertion':`${token}, ${token}`}]) assert.throws(()=>assertionFromHeaders(headers), AccessError);
+});
+test('configuration boundaries preserve Node normalization and zero timings', () => {
+  assert.doesNotThrow(()=>createAccessVerifier({...config,teamDomain:'https://FIXTURE.cloudflareaccess.com/'}));
+  assert.doesNotThrow(()=>createAccessVerifier({...config,cacheMaxAge:0,cooldownDuration:0,timeoutDuration:0}));
+  for(const audience of ['', ' ', ' aud', [], ['aud',' ']]) assert.throws(()=>createAccessVerifier({...config,audience}));
+  for(const key of ['cacheMaxAge','cooldownDuration','timeoutDuration']) {
+    for(const value of [-1,NaN,Infinity]) assert.throws(()=>createAccessVerifier({...config,[key]:value}));
+  }
+});
+test('Node ignores unsupported keys alongside a matching RSA key', async () => {
+  const jwks={keys:[...f.jwks.keys,{kty:'EC',kid:'unused',crv:'P-256',x:'AA',y:'AA'}]};
+  assert.deepEqual(await createAccessVerifier({...config,fetch:mock(jwks)}).verifyToken(f.cases.valid.token),f.cases.valid.identity);
+});
+test('fresh keys work during a stalled unknown-key refresh', async () => {
+  let calls=0; let started!:()=>void; let release!:()=>void;
+  const fetching=new Promise<void>(resolve=>{started=resolve;});
+  const finish=new Promise<void>(resolve=>{release=resolve;});
+  const verifier=createAccessVerifier({...config,cooldownDuration:0,fetch:(async()=>{
+    if(++calls===1) return new Response(JSON.stringify(f.jwks));
+    started(); await finish; throw new TypeError('offline');
+  }) as typeof fetch});
+  await verifier.verifyToken(f.cases.valid.token);
+  const refresh=assert.rejects(verifier.verifyToken(f.cases.rotated.token),(e:AccessError)=>e.status===503);
+  try {
+    await fetching;
+    assert.deepEqual(await verifier.verifyToken(f.cases.valid.token),f.cases.valid.identity);
+  } finally {release();await refresh;}
+  assert.equal(calls,2);
 });
 test('coalesces requests, caches keys, rotates only on unknown kid', async () => {
   let count=0; let jwks=f.jwks;

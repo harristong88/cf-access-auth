@@ -15,7 +15,7 @@ foreach ($f['cases'] as $name => $case) {
     if ($name === 'rotated') continue;
     test('shared fixture: ' . $name, function () use ($base, $f, $case) {
         $v = new AccessVerifier($base + ['cacheDirectory' => tempdir(), 'fetch' => static fn () => $f['jwks']]);
-        if ($case['status'] === 200) { $i = $v->verifyToken($case['token']); check($i->expiresAt === 4102444800); check(array_keys($i->jsonSerialize()) === ['issuer','subject','email','expiresAt']); }
+        if (($case['statuses']['php'] ?? $case['status']) === 200) { $i = $v->verifyToken($case['token']); check($i->jsonSerialize() === $case['identity']); }
         else denied(fn () => $v->verifyToken($case['token']), 401);
     });
 }
@@ -26,6 +26,30 @@ test('header extraction and cookie/email rejection', function () use ($base, $f)
     foreach ([[], ['Cookie' => 'CF_Authorization=' . $t], ['Cf-Access-Authenticated-User-Email' => 'Alice@example.com'],
         ['cf-access-jwt-assertion' => [$t, $t]], ['cf-access-jwt-assertion' => $t, 'Cf-Access-Jwt-Assertion' => $t],
         ['cf-access-jwt-assertion' => $t . ', ' . $t]] as $h) denied(fn () => $v->authenticateRequest($h), 401);
+});
+test('PHP configuration boundaries and audience transition', function () use ($base, $f) {
+    $directory = tempdir();
+    foreach ([['teamDomain'=>'http://fixture.cloudflareaccess.com'], ['teamDomain'=>'https://evil.test'], ['teamDomain'=>'https://FIXTURE.cloudflareaccess.com'], ['teamDomain'=>$f['issuer'].'/path'], ['audience'=>''], ['audience'=>[]], ['audience'=>['aud',' ']], ['cacheTtl'=>0], ['timeout'=>0], ['cooldown'=>-1]] as $override) {
+        try { new AccessVerifier(array_replace($base, ['cacheDirectory'=>$directory], $override)); }
+        catch (InvalidArgumentException $error) { continue; }
+        throw new RuntimeException('Expected invalid PHP configuration');
+    }
+    $v = new AccessVerifier(array_replace($base, ['teamDomain'=>$f['issuer'].'/', 'audience'=>['old',$f['audience']], 'cacheDirectory'=>$directory, 'fetch'=>static fn () => $f['jwks']]));
+    check($v->verifyToken($f['cases']['valid']['token'])->subject === 'user-1');
+});
+test('sequential failed downloads back off and recover', function () use ($base, $f) {
+    $calls = 0; $available = false;
+    $fetch = static function () use (&$calls, &$available, $f) { $calls++; if (!$available) throw new RuntimeException('offline'); return $f['jwks']; };
+    $v = new AccessVerifier($base + ['cacheDirectory'=>tempdir(), 'cooldown'=>1, 'fetch'=>$fetch]);
+    for ($i=0; $i<5; $i++) denied(fn () => $v->verifyToken($f['cases']['valid']['token']),503);
+    check($calls === 1);
+    $available = true; sleep(1);
+    $v->verifyToken($f['cases']['valid']['token']); check($calls === 2);
+});
+test('PHP rejects an unsupported key even alongside a matching RSA key', function () use ($base, $f) {
+    $jwks = ['keys'=>[...$f['jwks']['keys'], ['kty'=>'EC','kid'=>'unused']]];
+    $v = new AccessVerifier($base + ['cacheDirectory'=>tempdir(),'fetch'=>static fn () => $jwks]);
+    denied(fn () => $v->verifyToken($f['cases']['valid']['token']),503);
 });
 test('invalid protected headers fail before key fetching', function () use ($base, $f) {
     $calls = 0;

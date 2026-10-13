@@ -16,7 +16,8 @@
     }
   },
   "scripts": {
-    "test": "php php/tests/run.php"
+    "test": "php php/tests/run.php",
+    "test-package": "php scripts/smoke-php-package.php"
   },
   "archive": {
     "exclude": [

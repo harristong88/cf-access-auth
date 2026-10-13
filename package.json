@@ -29,7 +29,8 @@
     "prepare": "npm run build",
     "example": "node --experimental-sqlite --import tsx examples/express/app.ts",
     "fixtures": "node scripts/generate-fixtures.mjs",
-    "check": "npm test && tsc -p examples/express/tsconfig.json"
+    "check": "npm test && tsc -p examples/express/tsconfig.json",
+    "test:package": "npm run build && node scripts/smoke-node-package.mjs"
   },
   "dependencies": {
     "jose": "^6.1.0"

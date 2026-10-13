@@ -15,7 +15,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm audit --omit=dev
-      - run: npm pack
+      - run: npm run test:package
   php:
     runs-on: ubuntu-latest
     strategy:
@@ -26,10 +26,11 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: curl, openssl, mbstring
+          extensions: curl, openssl, mbstring, zip
       - run: composer install --no-interaction
       - run: composer validate --strict
       - run: composer test
+      - run: composer test-package
       - run: composer audit --no-dev
   python:
     runs-on: ubuntu-latest
@@ -45,7 +46,7 @@ jobs:
       - run: pip install './python[test]' build pip-audit
       - run: cd python && python -m pytest
       - run: pip-audit --progress-spinner off
-      - run: python -m build python
+      - run: python scripts/smoke-python-package.py
   secrets:
     runs-on: ubuntu-latest
     steps:

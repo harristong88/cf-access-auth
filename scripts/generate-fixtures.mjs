@@ -17,6 +17,13 @@ for (const [name, change] of Object.entries({wrongIssuer:{iss:'https://other.clo
 for (const field of ['iss','aud','exp','iat','nbf','sub','email','type']) {
   const claims = {...base}; delete claims[field]; cases['missing_'+field] = {token:token(claims),status:401};
 }
+for (const field of ['exp','iat','nbf']) {
+  for (const [kind,value] of Object.entries({boolean:true,string:field==='exp'?'4102444800':'1',fractional:field==='exp'?4102444800.5:1.5})) {
+    cases[`${field}_${kind}`] = {token:token({...base,[field]:value}),status:401};
+  }
+}
+cases.largeIntegerExpiry = {token:token({...base,exp:9007199254740992}),status:401,statuses:{php:200}};
+cases.trimmedEmail = {token:token({...base,email:' Alice@example.com ',sub:' user-1 '}),status:200};
 cases.wrongAlgorithm = {token:token(base,'key-a',a.privateKey,'HS256'),status:401};
 for (const [name, header] of Object.entries({
   unsupportedCrit: {crit:['custom'], custom:true}, emptyCrit:{crit:[]}, malformedCrit:{crit:false},
@@ -26,5 +33,11 @@ cases.tampered = {token:valid.slice(0,-8)+'AAAAAAAA',status:401};
 cases.malformed = {token:'not.a.jwt',status:401};
 cases.oversized = {token:'a'.repeat(16385),status:401};
 cases.rotated = {token:token(base,'key-b',b.privateKey),status:200};
+for (const scenario of Object.values(cases)) {
+  if (scenario.status===200 || Object.values(scenario.statuses??{}).includes(200)) {
+    const claims=JSON.parse(Buffer.from(scenario.token.split('.')[1],'base64url').toString());
+    scenario.identity={issuer:claims.iss,subject:claims.sub,email:claims.email.trim(),expiresAt:claims.exp};
+  }
+}
 const jwk = (key,kid) => ({...key.export({format:'jwk'}),kid,alg:'RS256',use:'sig'});
 writeFileSync('fixtures/tokens.json', JSON.stringify({issuer:base.iss,audience:'test-audience',jwks:{keys:[jwk(a.publicKey,'key-a')]},rotatedJwks:{keys:[jwk(b.publicKey,'key-b')]},cases},null,2)+'\n');
