@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 import re
 import time
@@ -13,7 +12,8 @@ from urllib.parse import urlsplit
 import httpx
 import jwt
 
-from ._jwks import SigningKey as _SigningKey, _parse_signing_keys
+from ._errors import AccessError
+from ._jwks import _JwksCache
 
 MAX_TOKEN_BYTES = 16384
 
@@ -24,17 +24,6 @@ class AccessIdentity:
     subject: str
     email: str
     expires_at: int
-
-
-class AccessError(Exception):
-    def __init__(self, code: str, status: int = 401):
-        self.code = code
-        self.status = status
-        super().__init__(
-            {401: "Unauthorized", 403: "Forbidden", 503: "Authentication unavailable"}[
-                status
-            ]
-        )
 
 
 def normalize_email(email: str) -> str:
@@ -98,22 +87,37 @@ class AccessVerifier:
             or timeout <= 0
         ):
             raise ValueError("Invalid JWKS timing")
-        self.issuer = f"https://{url.netloc}"
         self.audience = audiences
-        self.cache_ttl, self.cooldown = cache_ttl, cooldown
         self.on_diagnostic = on_diagnostic
-        self._client = httpx.AsyncClient(
-            timeout=timeout, transport=transport, follow_redirects=False
-        )
-        self._keys: dict[str, _SigningKey] = {}
-        self._expires = 0.0
-        self._last_fetch = -math.inf
-        self._generation = 0
-        self._last_error = False
-        self._lock = asyncio.Lock()
+        self._cache = _JwksCache(f"https://{url.netloc}", cache_ttl, timeout, cooldown, transport)
+
+    # These settings were public mutable attributes before cache extraction.
+    @property
+    def issuer(self) -> str:
+        return self._cache.issuer
+
+    @issuer.setter
+    def issuer(self, value: str) -> None:
+        self._cache.issuer = value
+
+    @property
+    def cache_ttl(self) -> float:
+        return self._cache.cache_ttl
+
+    @cache_ttl.setter
+    def cache_ttl(self, value: float) -> None:
+        self._cache.cache_ttl = value
+
+    @property
+    def cooldown(self) -> float:
+        return self._cache.cooldown
+
+    @cooldown.setter
+    def cooldown(self, value: float) -> None:
+        self._cache.cooldown = value
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        await self._cache.aclose()
 
     def _report(self, error: AccessError) -> None:
         if self.on_diagnostic:
@@ -121,36 +125,6 @@ class AccessVerifier:
                 self.on_diagnostic({"code": error.code, "status": error.status})
             except Exception:
                 pass
-
-    async def _key(self, kid: str):
-        now = time.monotonic()
-        if now < self._expires and kid in self._keys:
-            return self._keys[kid]
-        generation = self._generation
-        async with self._lock:
-            now = time.monotonic()
-            if now < self._expires and kid in self._keys:
-                return self._keys[kid]
-            # A waiter shares the completed fetch, including a failed fetch.
-            if self._generation != generation or now - self._last_fetch < self.cooldown:
-                if self._last_error or now >= self._expires:
-                    raise AccessError("JWKS_UNAVAILABLE", 503)
-                raise AccessError("INVALID_TOKEN")
-            self._last_fetch = now
-            self._generation += 1
-            try:
-                response = await self._client.get(self.issuer + "/cdn-cgi/access/certs")
-                response.raise_for_status()
-                document = response.json()
-                self._keys = _parse_signing_keys(document)
-                self._expires = time.monotonic() + self.cache_ttl
-                self._last_error = False
-            except Exception:
-                self._last_error = True
-                raise AccessError("JWKS_UNAVAILABLE", 503) from None
-            if kid not in self._keys:
-                raise AccessError("INVALID_TOKEN")
-            return self._keys[kid]
 
     async def verify_token(self, token: str) -> AccessIdentity:
         try:
@@ -164,7 +138,7 @@ class AccessVerifier:
                 or not header["kid"]
             ):
                 raise AccessError("INVALID_TOKEN")
-            key = await self._key(header["kid"])
+            key = await self._cache.key(header["kid"])
             payload = jwt.decode(
                 token,
                 key,
