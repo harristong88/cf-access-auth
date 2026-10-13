@@ -50,3 +50,48 @@ test('config validation, explicit audience transitions and safe diagnostics', as
   await assert.rejects(verifier.verifyToken(f.cases.valid.token),(e:AccessError)=>e.status===503);
   assert.deepEqual(events,[{code:'JWKS_UNAVAILABLE',status:503}]);
 });
+test('invalid protected headers are rejected before any remote lookup', async () => {
+  let calls=0;
+  const verifier=createAccessVerifier({...config,fetch:(async()=>{calls++;return new Response(JSON.stringify(f.jwks));}) as typeof fetch});
+  for (const name of ['wrongAlgorithm','unsupportedCrit','emptyCrit','malformedCrit','unencodedPayload','malformedB64','missingKid','emptyKid','numericKid']) {
+    await assert.rejects(verifier.verifyToken(f.cases[name].token),(e:AccessError)=>e.status===401);
+  }
+  await assert.rejects(verifier.verifyToken(f.cases.valid.token+'\n'),(e:AccessError)=>e.status===401);
+  assert.equal(calls,0);
+});
+test('cold and expired-cache failures share backoff and retry after it expires', async () => {
+  let calls=0; let available=false;
+  const verifier=createAccessVerifier({...config,cacheMaxAge:10,cooldownDuration:30,fetch:(async()=>{
+    calls++; await new Promise(r=>setTimeout(r,2));
+    if(!available) throw new TypeError('offline');
+    return new Response(JSON.stringify(f.jwks));
+  }) as typeof fetch});
+  await Promise.all(Array.from({length:10},()=>assert.rejects(verifier.verifyToken(f.cases.valid.token),(e:AccessError)=>e.status===503)));
+  for(let i=0;i<10;i++) await assert.rejects(verifier.verifyToken(f.cases.valid.token),(e:AccessError)=>e.status===503);
+  assert.equal(calls,1);
+  await new Promise(r=>setTimeout(r,40)); available=true;
+  await verifier.verifyToken(f.cases.valid.token); assert.equal(calls,2);
+  await new Promise(r=>setTimeout(r,15)); available=false;
+  for(let i=0;i<10;i++) await assert.rejects(verifier.verifyToken(f.cases.valid.token),(e:AccessError)=>e.status===503);
+  assert.equal(calls,3);
+});
+test('unknown-key outage probes back off while fresh matching keys work', async () => {
+  let calls=0; let available=true;
+  const verifier=createAccessVerifier({...config,cooldownDuration:30,fetch:(async()=>{
+    calls++; if(!available) throw new TypeError('offline'); return new Response(JSON.stringify(f.jwks));
+  }) as typeof fetch});
+  await verifier.verifyToken(f.cases.valid.token);
+  await new Promise(r=>setTimeout(r,40)); available=false;
+  const forged=Buffer.from(JSON.stringify({alg:'RS256',kid:'unknown'})).toString('base64url')+'.e30.AA';
+  for(let i=0;i<10;i++) await assert.rejects(verifier.verifyToken(forged),(e:AccessError)=>e.status===503);
+  assert.equal(calls,2);
+  await verifier.verifyToken(f.cases.valid.token); assert.equal(calls,2);
+});
+test('HTTP, invalid JSON and malformed JWKS failures also back off', async () => {
+  for(const response of [()=>new Response('unavailable',{status:503}),()=>new Response('{'),()=>new Response('{"keys":42}')]) {
+    let calls=0;
+    const verifier=createAccessVerifier({...config,fetch:(async()=>{calls++;return response();}) as typeof fetch});
+    for(let i=0;i<5;i++) await assert.rejects(verifier.verifyToken(f.cases.valid.token),(e:AccessError)=>e.status===503);
+    assert.equal(calls,1);
+  }
+});

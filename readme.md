@@ -65,7 +65,7 @@ PHP v0.3.0 removes the former FileGator-specific APIs and migration commands. Th
 
 Both packages require RS256, the configured team issuer and application audience, `type=app`, nonempty email/subject, and integer `exp`, `iat`, and `nbf`. Clock tolerance is zero. Service tokens and organization tokens are rejected by this human-login API.
 
-Keys come only from the configured `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`. Default cache lifetime is ten minutes, timeout five seconds, and unknown-key refresh cooldown thirty seconds. Fresh cached keys work offline; expired or unavailable keys fail closed. No refresh occurs for bad signatures, expired tokens, or audience errors. There is no one-use replay cache: browsers legitimately reuse an Access token.
+Keys come only from the configured `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`. Default cache lifetime is ten minutes, timeout five seconds, and unknown-key refresh cooldown thirty seconds. Node also backs off failed downloads for the configured cooldown. Fresh cached keys work offline and PHP snapshot reads do not wait for a network refresh; expired or unavailable keys fail closed. Unsupported critical headers and unencoded payloads are rejected before key lookup. There is no one-use replay cache: browsers legitimately reuse an Access token.
 
 Core errors expose a safe diagnostic code and HTTP status; HTTP adapters return generic 401/403/503 responses. Logs receive only `{code, status}`, never tokens or claims. Node timing options are milliseconds (`cacheMaxAge`, `timeoutDuration`, `cooldownDuration`); PHP options are seconds (`cacheTtl`, `timeout`, `cooldown`). An audience list accepts **any** explicitly configured audience.
 

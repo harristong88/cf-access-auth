@@ -37,7 +37,8 @@ final class AccessVerifier
             if (strlen($token) > 16384 || !preg_match('/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/D', $token)) throw new AccessException('MALFORMED_TOKEN');
             $segment = explode('.', $token)[0];
             $header = json_decode(JWT::urlsafeB64Decode($segment), true, 16, JSON_THROW_ON_ERROR);
-            if (($header['alg'] ?? '') !== 'RS256' || !is_string($header['kid'] ?? null) || !$header['kid']) throw new AccessException('INVALID_HEADER');
+            if (!is_array($header) || ($header['alg'] ?? '') !== 'RS256' || !is_string($header['kid'] ?? null) || !$header['kid'] ||
+                array_key_exists('crit', $header) || (array_key_exists('b64', $header) && $header['b64'] !== true)) throw new AccessException('INVALID_HEADER');
             // Header is untrusted and used only to select a key at the fixed configured endpoint.
             $key = $this->cache->key($header['kid']);
             $claims = JWT::decode($token, $key);

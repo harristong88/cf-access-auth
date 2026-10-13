@@ -1,0 +1,11 @@
+title = "cf-access-auth secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "jwt"
+
+[[rules.allowlists]]
+description = "Generated synthetic JWT fixtures; no production signing keys or credentials"
+paths = ['''(^|/)fixtures/tokens\.json$''']

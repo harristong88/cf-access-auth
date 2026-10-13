@@ -169,7 +169,7 @@ class AccessVerifier:
             _validate_token(token)
             header = jwt.get_unverified_header(token)
             if (
-                header.get("crit")
+                "crit" in header
                 or header.get("b64", True) is not True
                 or header.get("alg") != "RS256"
                 or not isinstance(header.get("kid"), str)

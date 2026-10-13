@@ -1,7 +1,7 @@
 <?php
 namespace CfAccess;
 
-/** A single locked cache per issuer; use a private writable directory on local storage. */
+/** Atomically published snapshots and a separate refresh lock per issuer. */
 final class JwksCache
 {
     private string $file;
@@ -31,26 +31,31 @@ final class JwksCache
     }
     public function key(string $kid): \Firebase\JWT\Key
     {
-        $handle = fopen($this->file, 'c+');
+        $cache = $this->read();
+        if ($this->fresh($cache) && isset($cache['keys'][$kid])) return $this->parse($cache['keys'][$kid]);
+        // Readers never take this lock. A slow refresh cannot block fresh keys.
+        $handle = fopen($this->file . '.lock', 'c');
         if (!$handle) throw new AccessException('JWKS_CACHE_UNAVAILABLE', 503);
-        chmod($this->file, 0600);
+        chmod($this->file . '.lock', 0600);
         $deadline = microtime(true) + $this->timeout;
+        $waited = false;
         try {
             while (!flock($handle, LOCK_EX | LOCK_NB)) {
+                $waited = true;
+                $cache = $this->read();
+                if ($this->fresh($cache) && isset($cache['keys'][$kid])) return $this->parse($cache['keys'][$kid]);
                 if (microtime(true) >= $deadline) throw new AccessException('JWKS_CACHE_BUSY', 503);
                 usleep(10000);
             }
-            $raw = stream_get_contents($handle);
-            $cache = $raw ? json_decode($raw, true) : [];
-            if (!is_array($cache)) $cache = [];
+            $cache = $this->read();
             $now = time();
-            $fresh = isset($cache['fetchedAt']) && $now - $cache['fetchedAt'] < $this->ttl;
+            $fresh = $this->fresh($cache);
             if ($fresh && isset($cache['keys'][$kid])) return $this->parse($cache['keys'][$kid]);
-            if (isset($cache['attemptedAt']) && $now - $cache['attemptedAt'] < $this->cooldown) {
+            if ($waited || (isset($cache['attemptedAt']) && $now - $cache['attemptedAt'] < $this->cooldown)) {
                 throw new AccessException($fresh ? 'UNKNOWN_KEY' : 'JWKS_UNAVAILABLE', $fresh ? 401 : 503);
             }
             $cache['attemptedAt'] = $now;
-            $this->write($handle, $cache);
+            $this->write($cache);
             try {
                 $jwks = ($this->fetch)($this->issuer . '/cdn-cgi/access/certs', $this->timeout);
                 if (!isset($jwks['keys']) || !is_array($jwks['keys']) || !$jwks['keys']) throw new \UnexpectedValueException('Invalid JWKS');
@@ -63,7 +68,7 @@ final class JwksCache
                     $keys[$key['kid']] = $key;
                 }
                 $cache = ['fetchedAt' => time(), 'attemptedAt' => time(), 'keys' => $keys];
-                $this->write($handle, $cache);
+                $this->write($cache);
             } catch (\Throwable $error) {
                 // A failed rotation refresh does not invalidate still-fresh, already-known keys.
                 throw new AccessException('JWKS_UNAVAILABLE', 503);
@@ -72,11 +77,29 @@ final class JwksCache
             return $this->parse($cache['keys'][$kid]);
         } finally { flock($handle, LOCK_UN); fclose($handle); }
     }
+    private function read(): array
+    {
+        if (!is_file($this->file)) return [];
+        $raw = file_get_contents($this->file);
+        if ($raw === false) throw new AccessException('JWKS_CACHE_UNAVAILABLE', 503);
+        $cache = json_decode($raw, true);
+        return is_array($cache) ? $cache : [];
+    }
+    private function fresh(array $cache): bool
+    {
+        $age = time() - ($cache['fetchedAt'] ?? 0);
+        return isset($cache['fetchedAt']) && $age >= 0 && $age < $this->ttl;
+    }
     private function parse(array $key): \Firebase\JWT\Key { return \Firebase\JWT\JWK::parseKey($key, 'RS256'); }
-    private function write($handle, array $cache): void
+    private function write(array $cache): void
     {
         $data = json_encode($cache, JSON_THROW_ON_ERROR);
-        rewind($handle);
-        if (!ftruncate($handle, 0) || fwrite($handle, $data) !== strlen($data) || !fflush($handle)) throw new AccessException('JWKS_CACHE_UNAVAILABLE', 503);
+        $temporary = tempnam(dirname($this->file), '.jwks-');
+        if ($temporary === false) throw new AccessException('JWKS_CACHE_UNAVAILABLE', 503);
+        try {
+            if (!chmod($temporary, 0600) || file_put_contents($temporary, $data) !== strlen($data) || !rename($temporary, $this->file)) {
+                throw new AccessException('JWKS_CACHE_UNAVAILABLE', 503);
+            }
+        } finally { if (is_file($temporary)) unlink($temporary); }
     }
 }

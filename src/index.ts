@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
+import { createRemoteJWKSet, customFetch, decodeProtectedHeader, jwtVerify, type JWTVerifyGetKey } from 'jose';
 
 export interface AccessIdentity { issuer: string; subject: string; email: string; expiresAt: number }
 export type Diagnostic = (event: { code: string; status: number }) => void;
@@ -33,7 +33,7 @@ export function assertionFromHeaders(headers: HeaderInput): string {
 }
 function validateToken(token: unknown): string {
   if (typeof token !== 'string' || Buffer.byteLength(token) > MAX_TOKEN_BYTES ||
-      !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) throw new AccessError('MALFORMED_TOKEN');
+      !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![\s\S])/.test(token)) throw new AccessError('MALFORMED_TOKEN');
   return token;
 }
 export function createAccessVerifier(config: AccessConfig) {
@@ -47,7 +47,28 @@ export function createAccessVerifier(config: AccessConfig) {
   if (!audience.length || audience.some(a => typeof a !== 'string' || !a.trim() || a !== a.trim())) throw new TypeError('audience is required');
   const settings = {cacheMaxAge: config.cacheMaxAge ?? 600000, timeoutDuration: config.timeoutDuration ?? 5000, cooldownDuration: config.cooldownDuration ?? 30000};
   for (const value of Object.values(settings)) if (!Number.isFinite(value) || value < 0) throw new TypeError('Invalid JWKS timing');
-  const keys = createRemoteJWKSet(new URL('/cdn-cgi/access/certs', issuer), {...settings, [customFetch]: config.fetch});
+  let retryAfter = 0;
+  const transport = config.fetch ?? globalThis.fetch;
+  const keys = createRemoteJWKSet(new URL('/cdn-cgi/access/certs', issuer), {
+    ...settings,
+    [customFetch]: async (url, options) => {
+      // Only remote fetches are gated: fresh matching keys remain usable offline.
+      if (performance.now() < retryAfter) throw new AccessError('JWKS_UNAVAILABLE', 503);
+      return transport(url, options);
+    },
+  });
+  const resolveKey: JWTVerifyGetKey = async (header, token) => {
+    try { return await keys(header, token); }
+    catch (error) {
+      const code = (error as {code?: string})?.code;
+      if (!(error instanceof AccessError) && code !== 'ERR_JWKS_NO_MATCHING_KEY' && code !== 'ERR_JOSE_NOT_SUPPORTED') {
+        // jose's own cooldown covers successful downloads, but not failures.
+        // Back off transport, HTTP, JSON and malformed-JWKS failures as well.
+        retryAfter = performance.now() + settings.cooldownDuration;
+      }
+      throw error;
+    }
+  };
   function report(error: AccessError): never {
     try { config.onDiagnostic?.({code: error.code, status: error.status}); } catch { /* Diagnostics cannot change authentication. */ }
     throw error;
@@ -55,7 +76,12 @@ export function createAccessVerifier(config: AccessConfig) {
   async function verifyToken(token: string): Promise<AccessIdentity> {
     try {
       validateToken(token);
-      const { payload, protectedHeader } = await jwtVerify(token, keys, {
+      let header: ReturnType<typeof decodeProtectedHeader>;
+      try { header = decodeProtectedHeader(token); }
+      catch { throw new AccessError('INVALID_HEADER'); }
+      if (header.alg !== 'RS256' || typeof header.kid !== 'string' || !header.kid ||
+          'crit' in header || (header.b64 !== undefined && header.b64 !== true)) throw new AccessError('INVALID_HEADER');
+      const { payload, protectedHeader } = await jwtVerify(token, resolveKey, {
         algorithms: ['RS256'], issuer, audience, requiredClaims: ['iss', 'aud', 'exp', 'iat', 'nbf', 'sub', 'email', 'type'], clockTolerance: 0,
       });
       if (typeof protectedHeader.kid !== 'string' || !protectedHeader.kid || payload.type !== 'app' ||
@@ -69,7 +95,7 @@ export function createAccessVerifier(config: AccessConfig) {
       if (error instanceof AccessError) return report(error);
       const code = (error as {code?: string}).code;
       // Key lookup failures are invalid credentials. Transport/JWKS availability errors are retryable.
-      const invalid = ['ERR_JWT_EXPIRED','ERR_JWT_CLAIM_VALIDATION_FAILED','ERR_JWS_SIGNATURE_VERIFICATION_FAILED','ERR_JOSE_ALG_NOT_ALLOWED','ERR_JWS_INVALID','ERR_JWT_INVALID','ERR_JWKS_NO_MATCHING_KEY','ERR_JOSE_NOT_SUPPORTED'];
+      const invalid = ['ERR_JWT_EXPIRED','ERR_JWT_CLAIM_VALIDATION_FAILED','ERR_JWS_SIGNATURE_VERIFICATION_FAILED','ERR_JOSE_ALG_NOT_ALLOWED','ERR_JOSE_INVALID','ERR_JWS_INVALID','ERR_JWT_INVALID','ERR_JWKS_NO_MATCHING_KEY','ERR_JOSE_NOT_SUPPORTED'];
       return report(new AccessError(invalid.includes(code ?? '') ? 'INVALID_TOKEN' : 'JWKS_UNAVAILABLE', invalid.includes(code ?? '') ? 401 : 503));
     }
   }

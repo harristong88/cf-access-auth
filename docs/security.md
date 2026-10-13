@@ -20,6 +20,10 @@ PHP sees the headers your web server exposes. Duplicate values that are preserve
 
 Restrict write access to PHP cache/database directories and the storage root to the app OS user. Do not allow users to replace directory ancestors while homes are being provisioned. FileGator and its filesystem adapter still own containment/security for uploaded files and archives. Symlink/traversal checks in home provisioning do not replace auditing the file manager itself.
 
+The PHP JWKS cache publishes snapshots atomically and uses a separate `.lock` file for refresh coordination. Restart all PHP workers when upgrading from the older single-file lock implementation; mixed versions do not share the same refresh lock. Keep both snapshot and lock files in the private cache directory.
+
+CI scans Git history with [Gitleaks](https://github.com/gitleaks/gitleaks), audits npm production dependencies and the Python test environment, and runs Composer's production audit. Only JWT findings in the generated `fixtures/tokens.json` are allowlisted; other secret rules still apply to that file. Test fixtures must never contain real credentials.
+
 ## Pinned upstream dependency findings
 
 On 2026-10-08, the module's own npm and Composer dependency audits passed. The deliberately pinned FileGator v7.16.5 dependency tree had four production Composer advisories across three existing packages:

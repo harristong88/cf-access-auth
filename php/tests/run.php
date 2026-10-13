@@ -27,6 +27,14 @@ test('header extraction and cookie/email rejection', function () use ($base, $f)
         ['cf-access-jwt-assertion' => [$t, $t]], ['cf-access-jwt-assertion' => $t, 'Cf-Access-Jwt-Assertion' => $t],
         ['cf-access-jwt-assertion' => $t . ', ' . $t]] as $h) denied(fn () => $v->authenticateRequest($h), 401);
 });
+test('invalid protected headers fail before key fetching', function () use ($base, $f) {
+    $calls = 0;
+    $v = new AccessVerifier($base + ['cacheDirectory' => tempdir(), 'fetch' => static function () use (&$calls, $f) { $calls++; return $f['jwks']; }]);
+    foreach (['wrongAlgorithm','unsupportedCrit','emptyCrit','malformedCrit','unencodedPayload','malformedB64','missingKid','emptyKid','numericKid'] as $name) {
+        denied(fn () => $v->verifyToken($f['cases'][$name]['token']), 401);
+    }
+    check($calls === 0, 'invalid header fetched keys');
+});
 test('persistent cache, offline warm keys, cooldown, rotation, no refetch for bad signatures', function () use ($base, $f) {
     $calls = 0; $jwks = $f['jwks']; $offline = false; $dir = tempdir();
     $fetch = static function () use (&$calls, &$jwks, &$offline) { $calls++; if ($offline) throw new RuntimeException('offline'); return $jwks; };
@@ -58,5 +66,31 @@ test('concurrent workers coalesce JWKS fetching', function () {
     for ($i = 0; $i < 6; $i++) $processes[] = proc_open([PHP_BINARY, __DIR__ . '/worker.php', $directory], [1=>['pipe','w'],2=>['pipe','w']], $pipes);
     foreach ($processes as $process) check(proc_close($process) === 0, 'worker failed');
     check(count(file($directory . '/fetches')) === 1, 'multiple network fetches');
+});
+test('fresh keys remain available during a slow cross-process refresh', function () use ($base, $f) {
+    $directory = tempdir();
+    $v = new AccessVerifier($base + ['cacheDirectory' => $directory, 'fetch' => static fn () => $f['jwks']]);
+    $v->verifyToken($f['cases']['valid']['token']);
+    $process = proc_open([PHP_BINARY, __DIR__ . '/refresh-worker.php', $directory], [1=>['pipe','w'],2=>['pipe','w']], $pipes);
+    check(is_resource($process), 'refresh worker failed to start');
+    try {
+        $deadline = microtime(true) + 3;
+        while (!is_file($directory . '/refresh-started')) {
+            if (microtime(true) >= $deadline) throw new RuntimeException('refresh worker did not fetch');
+            usleep(10000);
+        }
+        $started = microtime(true);
+        $v->verifyToken($f['cases']['valid']['token']);
+        check(microtime(true) - $started < 1, 'warm authentication waited for network');
+        check(!is_file($directory . '/refresh-finished'), 'refresh was not still in progress');
+    } finally {
+        touch($directory . '/release-refresh');
+        $output = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]);
+        check(proc_close($process) === 0, 'refresh worker failed: ' . $output . $errors);
+    }
+    $v->verifyToken($f['cases']['valid']['token']);
+    $cache = $directory . '/' . hash('sha256', $f['issuer']) . '.json';
+    check((fileperms($cache) & 0777) === 0600, 'snapshot permissions');
 });
 echo "$count PHP checks passed\n";

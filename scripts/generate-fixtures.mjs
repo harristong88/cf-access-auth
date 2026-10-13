@@ -4,8 +4,8 @@ const pair = () => generateKeyPairSync('rsa', {modulusLength: 2048});
 const a = pair(), b = pair();
 const enc = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const base = {iss:'https://fixture.cloudflareaccess.com', aud:['test-audience'], exp:4102444800, iat:1, nbf:1, sub:'user-1', email:'Alice@example.com', type:'app'};
-function token(claims, kid = 'key-a', key = a.privateKey, alg = 'RS256') {
-  const unsigned = enc({alg, kid, typ:'JWT'}) + '.' + enc(claims);
+function token(claims, kid = 'key-a', key = a.privateKey, alg = 'RS256', header = {}) {
+  const unsigned = enc({alg, kid, typ:'JWT', ...header}) + '.' + enc(claims);
   const signature = alg === 'HS256' ? createHmac('sha256','test-only').update(unsigned).digest() : createSign('RSA-SHA256').update(unsigned).sign(key);
   return unsigned + '.' + signature.toString('base64url');
 }
@@ -18,6 +18,10 @@ for (const field of ['iss','aud','exp','iat','nbf','sub','email','type']) {
   const claims = {...base}; delete claims[field]; cases['missing_'+field] = {token:token(claims),status:401};
 }
 cases.wrongAlgorithm = {token:token(base,'key-a',a.privateKey,'HS256'),status:401};
+for (const [name, header] of Object.entries({
+  unsupportedCrit: {crit:['custom'], custom:true}, emptyCrit:{crit:[]}, malformedCrit:{crit:false},
+  unencodedPayload:{b64:false}, malformedB64:{b64:null}, missingKid:{kid:undefined}, emptyKid:{kid:''}, numericKid:{kid:42},
+})) cases[name] = {token:token(base,'key-a',a.privateKey,'RS256',header),status:401};
 cases.tampered = {token:valid.slice(0,-8)+'AAAAAAAA',status:401};
 cases.malformed = {token:'not.a.jwt',status:401};
 cases.oversized = {token:'a'.repeat(16385),status:401};
