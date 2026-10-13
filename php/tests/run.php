@@ -12,11 +12,12 @@ function test(string $name, Closure $fn): void { global $count; $fn(); $count++;
 function tempdir(): string { $p = sys_get_temp_dir() . '/cf-access-' . bin2hex(random_bytes(8)); mkdir($p, 0700); return $p; }
 $base = ['teamDomain' => $f['issuer'], 'audience' => $f['audience']];
 foreach ($f['cases'] as $name => $case) {
-    if ($name === 'rotated') continue;
     test('shared fixture: ' . $name, function () use ($base, $f, $case) {
-        $v = new AccessVerifier($base + ['cacheDirectory' => tempdir(), 'fetch' => static fn () => $f['jwks']]);
+        $calls = 0;
+        $v = new AccessVerifier($base + ['cacheDirectory' => tempdir(), 'fetch' => static function () use (&$calls, $f, $case) { $calls++; return $f[$case['keySet'] ?? 'jwks']; }]);
         if (($case['statuses']['php'] ?? $case['status']) === 200) { $i = $v->verifyToken($case['token']); check($i->jsonSerialize() === $case['identity']); }
-        else denied(fn () => $v->verifyToken($case['token']), 401);
+        else denied(fn () => $v->verifyToken($case['token']), $case['statuses']['php'] ?? $case['status']);
+        check($calls === $case['keyFetches'], 'wrong key fetch count');
     });
 }
 test('header extraction and cookie/email rejection', function () use ($base, $f) {
@@ -50,14 +51,6 @@ test('PHP rejects an unsupported key even alongside a matching RSA key', functio
     $jwks = ['keys'=>[...$f['jwks']['keys'], ['kty'=>'EC','kid'=>'unused']]];
     $v = new AccessVerifier($base + ['cacheDirectory'=>tempdir(),'fetch'=>static fn () => $jwks]);
     denied(fn () => $v->verifyToken($f['cases']['valid']['token']),503);
-});
-test('invalid protected headers fail before key fetching', function () use ($base, $f) {
-    $calls = 0;
-    $v = new AccessVerifier($base + ['cacheDirectory' => tempdir(), 'fetch' => static function () use (&$calls, $f) { $calls++; return $f['jwks']; }]);
-    foreach (['wrongAlgorithm','unsupportedCrit','emptyCrit','malformedCrit','unencodedPayload','malformedB64','missingKid','emptyKid','numericKid'] as $name) {
-        denied(fn () => $v->verifyToken($f['cases'][$name]['token']), 401);
-    }
-    check($calls === 0, 'invalid header fetched keys');
 });
 test('persistent cache, offline warm keys, cooldown, rotation, no refetch for bad signatures', function () use ($base, $f) {
     $calls = 0; $jwks = $f['jwks']; $offline = false; $dir = tempdir();

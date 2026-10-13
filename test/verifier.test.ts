@@ -5,15 +5,18 @@ import { AccessError, createAccessVerifier, assertionFromHeaders } from '../src/
 const f = JSON.parse(readFileSync(new URL('../fixtures/tokens.json', import.meta.url), 'utf8'));
 const mock = (jwks = f.jwks) => (async () => new Response(JSON.stringify(jwks))) as typeof fetch;
 const config = {teamDomain:f.issuer,audience:f.audience};
-for (const [name, scenario] of Object.entries(f.cases) as [string, {token:string,status:number,identity?:unknown}][]) {
-  if (name === 'rotated') continue;
+interface FixtureCase {token:string;status:number;statuses?:{node?:number};identity?:unknown;keyFetches:number;keySet?:string}
+for (const [name, scenario] of Object.entries(f.cases) as [string, FixtureCase][]) {
   test(`shared fixture: ${name}`, async () => {
-    const verifier = createAccessVerifier({...config, fetch:mock()});
-    if (scenario.status === 200) {
+    let calls=0;
+    const verifier = createAccessVerifier({...config, fetch:(async()=>{calls++;return new Response(JSON.stringify(f[scenario.keySet??'jwks']));}) as typeof fetch});
+    const status=scenario.statuses?.node??scenario.status;
+    if (status === 200) {
       const identity = await verifier.verifyToken(scenario.token);
       assert.deepEqual(identity,scenario.identity);
       assert.deepEqual(Object.keys(identity),['issuer','subject','email','expiresAt']);
-    } else await assert.rejects(verifier.verifyToken(scenario.token), (e:AccessError) => e.status === 401);
+    } else await assert.rejects(verifier.verifyToken(scenario.token), (e:AccessError) => e.status === status);
+    assert.equal(calls,scenario.keyFetches);
   });
 }
 test('headers: case, duplicate, arrays, comma merging, cookie-only, email-only', async () => {
@@ -78,12 +81,9 @@ test('config validation, explicit audience transitions and safe diagnostics', as
   await assert.rejects(verifier.verifyToken(f.cases.valid.token),(e:AccessError)=>e.status===503);
   assert.deepEqual(events,[{code:'JWKS_UNAVAILABLE',status:503}]);
 });
-test('invalid protected headers are rejected before any remote lookup', async () => {
+test('a trailing token newline is rejected before any remote lookup', async () => {
   let calls=0;
   const verifier=createAccessVerifier({...config,fetch:(async()=>{calls++;return new Response(JSON.stringify(f.jwks));}) as typeof fetch});
-  for (const name of ['wrongAlgorithm','unsupportedCrit','emptyCrit','malformedCrit','unencodedPayload','malformedB64','missingKid','emptyKid','numericKid']) {
-    await assert.rejects(verifier.verifyToken(f.cases[name].token),(e:AccessError)=>e.status===401);
-  }
   await assert.rejects(verifier.verifyToken(f.cases.valid.token+'\n'),(e:AccessError)=>e.status===401);
   assert.equal(calls,0);
 });

@@ -24,16 +24,17 @@ for (const field of ['exp','iat','nbf']) {
 }
 cases.largeIntegerExpiry = {token:token({...base,exp:9007199254740992}),status:401,statuses:{php:200}};
 cases.trimmedEmail = {token:token({...base,email:' Alice@example.com ',sub:' user-1 '}),status:200};
-cases.wrongAlgorithm = {token:token(base,'key-a',a.privateKey,'HS256'),status:401};
+cases.wrongAlgorithm = {token:token(base,'key-a',a.privateKey,'HS256'),status:401,keyFetches:0};
 for (const [name, header] of Object.entries({
   unsupportedCrit: {crit:['custom'], custom:true}, emptyCrit:{crit:[]}, malformedCrit:{crit:false},
   unencodedPayload:{b64:false}, malformedB64:{b64:null}, missingKid:{kid:undefined}, emptyKid:{kid:''}, numericKid:{kid:42},
-})) cases[name] = {token:token(base,'key-a',a.privateKey,'RS256',header),status:401};
+})) cases[name] = {token:token(base,'key-a',a.privateKey,'RS256',header),status:401,keyFetches:0};
 cases.tampered = {token:valid.slice(0,-8)+'AAAAAAAA',status:401};
-cases.malformed = {token:'not.a.jwt',status:401};
-cases.oversized = {token:'a'.repeat(16385),status:401};
-cases.rotated = {token:token(base,'key-b',b.privateKey),status:200};
+cases.malformed = {token:'not.a.jwt',status:401,keyFetches:0};
+cases.oversized = {token:'a'.repeat(16385),status:401,keyFetches:0};
+cases.rotated = {token:token(base,'key-b',b.privateKey),status:200,keySet:'rotatedJwks'};
 for (const scenario of Object.values(cases)) {
+  scenario.keyFetches ??= 1;
   if (scenario.status===200 || Object.values(scenario.statuses??{}).includes(200)) {
     const claims=JSON.parse(Buffer.from(scenario.token.split('.')[1],'base64url').toString());
     scenario.identity={issuer:claims.iss,subject:claims.sub,email:claims.email.trim(),expiresAt:claims.exp};

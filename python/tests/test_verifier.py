@@ -24,13 +24,15 @@ def verifier(handler=None, **kwargs):
 
 @pytest.mark.parametrize("name,scenario", list(FIXTURE["cases"].items()))
 async def test_shared_fixtures(name, scenario):
-    v = verifier(
-        lambda req: httpx.Response(
-            200, json=FIXTURE["rotatedJwks"] if name == "rotated" else FIXTURE["jwks"]
-        )
-    )
+    calls = 0
+    def fetch(req):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json=FIXTURE[scenario.get("keySet", "jwks")])
+    v = verifier(fetch)
+    status = scenario.get("statuses", {}).get("python", scenario["status"])
     try:
-        if scenario["status"] == 200:
+        if status == 200:
             identity = await v.verify_token(scenario["token"])
             expected = dict(scenario["identity"])
             expected["expires_at"] = expected.pop("expiresAt")
@@ -38,7 +40,8 @@ async def test_shared_fixtures(name, scenario):
         else:
             with pytest.raises(AccessError) as exc:
                 await v.verify_token(scenario["token"])
-            assert exc.value.status == 401
+            assert exc.value.status == status
+        assert calls == scenario["keyFetches"]
     finally:
         await v.aclose()
 
